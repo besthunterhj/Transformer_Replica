@@ -458,8 +458,61 @@ def example_positional():
     )
 
 
-def make_model():
-    pass
+def make_model(src_vocab_size: int, tgt_vocab_size: int, n_stacked: int = 6,
+               d_model: int = 512, d_ff: int = 2048, h_n: int = 8, dropout: float = 0.1):
+
+    c = copy.deepcopy
+    attn = MultiHeadAttention(h_n=h_n, d_model=d_model)
+    ff = PositionWiseFeedForward(d_model=d_model, d_ff=d_ff)
+    position = PositionalEncoding(d_model=d_model, dropout=dropout)
+    model = EncoderDecoder(
+        encoder=Encoder(EncoderLayer(size=d_model, self_attn=c(attn), feed_forward=ff, dropout=dropout), n=n_stacked),
+        decoder=Decoder(DecoderLayer(size=d_model, self_attn=c(attn),
+                                     src_attn=c(attn), feed_forward=ff, dropout=dropout), n=n_stacked),
+        src_embed=nn.Sequential(Embeddings(d_model=d_model, vocab_size=src_vocab_size), c(position)),
+        tgt_embed=nn.Sequential(Embeddings(d_model=d_model, vocab_size=tgt_vocab_size), c(position)),
+        generator=Generator(d_model=d_model, vocab_size=tgt_vocab_size)
+    )
+
+    # Initialize parameters with Glorot / fan_avg
+    for p in model.parameters():
+        if p.dim() > 1:
+            nn.init.xavier_uniform_(p)
+
+    return model
+
+
+def inference_test():
+    # init the un-trained model
+    test_model = make_model(11, 11, 2)
+    test_model.eval()
+
+    # the input of the Encoder
+    src = torch.LongTensor([[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]])
+    src_mask = torch.ones(1, 1, 10)
+
+    # Encoding
+    memory = test_model.encode(src=src, src_mask=src_mask)
+
+    # the input of the Decoder
+    ys = torch.zeros(1, 1).type_as(src)
+
+    for i in range(9):
+        out = test_model.decode(
+            memory, src_mask, ys, subsequent_mask(ys.size(1)).type_as(src.data)
+        )
+        prob = test_model.generator(out[:, -1])
+        _, next_word = torch.max(prob, dim=1)
+        next_word = next_word.data[0]
+        ys = torch.cat(
+            [ys, torch.empty(1, 1).type_as(src.data).fill_(next_word)], dim=1
+        )
+
+    print("Example Untrained Model Prediction:", ys)
+
 
 if __name__ == '__main__':
-    pass
+    # print(make_model(1258, 1147, 2))
+
+    for _ in range(10):
+        inference_test()
